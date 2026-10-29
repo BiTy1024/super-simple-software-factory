@@ -74,6 +74,9 @@ def main() -> int:
     stamp(TEMPLATES / "sssf.config.yaml",
           root / "adws" / "adw_sssf_config" / "sssf.config.yaml",
           args.force, stamped, skipped)
+    stamp(TEMPLATES / "sssf.claude_code.yaml",
+          root / "adws" / "adw_sssf_config" / "claude_code.example.yaml",
+          args.force, stamped, skipped)
     stamp(TEMPLATES / "env.sample", root / ".env.sample", args.force, stamped, skipped)
     # The recipes are part of the operating experience, and several cookbooks
     # plus the run banner tell you to use them, so a stamped repo has to have

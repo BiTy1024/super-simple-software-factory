@@ -90,7 +90,7 @@ Mapping from the roster to the CLI:
 | `model` | `--model` (an `anthropic/` prefix is stripped) |
 | `thinking` | `--effort` (`off`/`minimal` -> `low`, the rest passes through) |
 | `tools` | `--tools` and `--allowedTools`. pi names map: `read`->`Read`, `bash`->`Bash`, `edit`->`Edit`, `write`->`Write`, `grep`->`Grep`, `find`/`ls`->`Glob`. A capitalized name passes through (`Skill`, `Agent`, `WebFetch`). Unmapped lowercase names (pi extension tools) are dropped and listed in the `agent_start` payload. |
-| `harness_engineering` | `--plugin-dir` per entry (pi: `-e` extensions) |
+| `harness_engineering` | a directory becomes `--plugin-dir`; a file (a pi `-e` extension) is dropped and listed as `dropped_extensions` in `agent_start` |
 | `writes` | unchanged: enforced in Python after every call (`permissions.py`) |
 | system prompt | `--append-system-prompt` (default) or `--system-prompt` |
 
@@ -221,7 +221,7 @@ which both formats share.
 
 ```sh
 uv run --with pydantic --with pyyaml --with python-dotenv --with rich \
-  python -m unittest discover -s tests -t .
+  python -m unittest discover -s tests
 cd .claude/skills/sssf/apps/visualizer && bun test && bun run build
 ```
 

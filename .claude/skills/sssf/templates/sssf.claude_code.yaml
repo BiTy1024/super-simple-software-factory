@@ -1,0 +1,81 @@
+# sssf.claude_code.yaml — the starter roster on Claude Code instead of pi.
+# Same agents, prompts and boundaries as sssf.config.yaml; the model is picked
+# by role: planner and reviewer on Opus, builder on Sonnet, documenter and
+# scout on Haiku. Run any ADW against it with --config, or
+#   SSSF_CONFIG=adws/adw_sssf_config/claude_code.example.yaml just sdlc "..."
+# Mixing is allowed: set `coding_agent: pi` (and a provider/id model) on any one
+# agent and the chain runs that phase on pi.
+defaults:
+  coding_agent: claude_code
+  model: sonnet                    # alias or full id (claude-sonnet-5-5)
+  thinking: medium                 # -> claude --effort (off/minimal -> low)
+  harness_engineering: []          # a directory here is passed as --plugin-dir
+  tools: [read, bash, edit, write, grep, find, ls]   # mapped to Read, Bash, Edit, Write, Grep, Glob
+  claude_code:
+    permission_mode: dontAsk       # headless: only --allowedTools run; writes are still checked in code
+    system_prompt_mode: append     # keep Claude Code's own system prompt, add the agent's
+    bare: false                    # true: no user hooks/plugins/CLAUDE.md; auth via ANTHROPIC_API_KEY only
+    setting_sources: null          # e.g. "project,local" to ignore user-level settings
+    max_budget_usd: null           # hard stop per send
+    extra_args: []
+  protected_files:
+    - adws/adw_modules/
+    - adws/adw_sssf_config/
+    - adws/adw_*.py
+  data_dir: adws/adw_data
+
+observability:
+  db: adws/adw_data/sssf.db
+  poll_ms: 500
+
+agents:
+  - name: planner
+    model: opus
+    thinking: high
+    color: "#a78bfa"
+    purpose: Turn a request into a plan the builder can implement without asking questions.
+    prompt_engineering:
+      system: adws/adw_data/prompt_engineering/planner/system.md
+      user: adws/adw_data/prompt_engineering/planner/user.md
+    writes: [specs/]
+    tools: [read, grep, find, bash, write, Agent]   # Agent: Claude Code's own subagents
+
+  - name: builder
+    model: sonnet
+    color: "#22d3ee"
+    purpose: Implement the plan exactly; report every changed file in the envelope.
+    prompt_engineering:
+      system: adws/adw_data/prompt_engineering/builder/system.md
+      user: adws/adw_data/prompt_engineering/builder/user.md
+
+  - name: scout
+    model: haiku
+    thinking: low
+    color: "#fbbf24"
+    purpose: Find and report where things live; change nothing.
+    prompt_engineering:
+      system: adws/adw_data/prompt_engineering/scout/system.md
+      user: adws/adw_data/prompt_engineering/scout/user.md
+    writes: []
+    tools: [read, grep, find, bash, write]
+
+  - name: reviewer
+    model: opus
+    thinking: high
+    color: "#fb7185"
+    purpose: Confirm that what was built is what was asked for; change nothing.
+    prompt_engineering:
+      system: adws/adw_data/prompt_engineering/reviewer/system.md
+      user: adws/adw_data/prompt_engineering/reviewer/user.md
+    writes: []
+    tools: [read, grep, find, bash, write]
+
+  - name: documenter
+    model: haiku
+    color: "#e879f9"
+    purpose: Write up the change that was just made, from the diff; document only.
+    prompt_engineering:
+      system: adws/adw_data/prompt_engineering/documenter/system.md
+      user: adws/adw_data/prompt_engineering/documenter/user.md
+    writes: [app_docs/, docs/, "**/*.md", "*.md"]
+    tools: [read, grep, find, bash, write, edit]
