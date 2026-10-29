@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { useRoute, hrefFor, phaseCrumb } from './lib/router'
+import { useRoute, hrefFor, phaseCrumb, USAGE_HREF } from './lib/router'
 import SessionsList from './components/SessionsList.vue'
 import SessionTrace from './components/SessionTrace.vue'
+import UsageView from './components/UsageView.vue'
 
 const route = useRoute()
 </script>
@@ -19,7 +20,9 @@ const route = useRoute()
         </svg>
         <span class="brand">Super Simple Software Factory</span>
         <span class="sep">›</span>
-        <a :href="hrefFor()" :class="{ current: !route.adwId }">sessions</a>
+        <a :href="hrefFor()" :class="{ current: !route.adwId && !route.usage }">sessions</a>
+        <span class="sep">·</span>
+        <a :href="USAGE_HREF" :class="{ current: route.usage }">usage</a>
         <template v-if="route.adwId">
           <span class="sep">›</span>
           <a :href="hrefFor(route.adwId)" :class="{ current: !route.phaseId }">{{
@@ -34,7 +37,8 @@ const route = useRoute()
       <span class="live-hint"><span class="live-dot" /> live</span>
     </header>
     <main>
-      <SessionsList v-if="!route.adwId" />
+      <UsageView v-if="route.usage" />
+      <SessionsList v-else-if="!route.adwId" />
       <SessionTrace v-else :key="route.adwId" :adw-id="route.adwId" :phase-id="route.phaseId" />
     </main>
   </div>

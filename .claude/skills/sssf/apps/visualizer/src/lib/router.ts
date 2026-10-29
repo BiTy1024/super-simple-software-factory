@@ -1,10 +1,14 @@
 import { ref } from 'vue'
 
 // Hash routes: #/ → sessions · #/<adw_id> → waterfall · #/<adw_id>/<phase_id> → phase panel open
+// · #/usage → cost and tool rollups across runs (adw_ids are hex, so no collision)
 export interface Route {
   adwId: string | null
   phaseId: string | null
+  usage: boolean
 }
+
+export const USAGE_HREF = '#/usage'
 
 function parse(): Route {
   const parts = window.location.hash
@@ -12,7 +16,8 @@ function parse(): Route {
     .split('/')
     .filter(Boolean)
     .map(decodeURIComponent)
-  return { adwId: parts[0] ?? null, phaseId: parts[1] ?? null }
+  if (parts[0] === 'usage') return { adwId: null, phaseId: null, usage: true }
+  return { adwId: parts[0] ?? null, phaseId: parts[1] ?? null, usage: false }
 }
 
 const route = ref<Route>(parse())

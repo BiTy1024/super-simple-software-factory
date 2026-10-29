@@ -206,6 +206,28 @@ export interface AgentEndPayload {
   /** Window occupancy after the final turn, and the model's ceiling. */
   context_tokens?: number;
   context_window?: number;
+  /** claude_code only — the rollups agent_cc.py sums across the phase's sends. */
+  runtime?: string;
+  by_model?: Record<string, CostCell>;
+  by_skill?: Record<string, CostCell & { tool_calls?: number }>;
+  subagents?: SubagentRollup[];
+}
+
+/** Tokens and dollars for one key of a rollup (a model, a skill). */
+export interface CostCell {
+  tokens: number;
+  cost: number;
+}
+
+/** One Claude Code subagent spawned inside an agent's phase. */
+export interface SubagentRollup {
+  id: string;
+  type: string;
+  description?: string;
+  model?: string;
+  tokens: number;
+  cost: number;
+  tool_calls: number;
 }
 
 /**
@@ -221,6 +243,11 @@ export interface ToolCallPayload {
   ok?: boolean;
   duration_ms?: number;
   agent?: string;
+  /** claude_code only: the skill active for this call, "(none)" outside one. */
+  skill?: string;
+  /** claude_code only: set when the call ran inside a subagent. */
+  subagent?: { id: string; type: string };
+  runtime?: string;
 }
 
 // ── API responses ────────────────────────────────────────────────────────────
@@ -252,7 +279,7 @@ export interface SessionDetail {
    * One entry per agent that has run OR is running under this adw_id — lane
    * labels come from here. Finished agents come from the agent_sessions table;
    * an agent still in flight has no row there yet, so its entry is built from
-   * its agent_start event (coding_agent is null until it finishes).
+   * its agent_start event.
    */
   agents: AgentSession[];
 }
@@ -299,6 +326,56 @@ export interface HealthResponse {
   db: string;
   journal_mode: string;
   sessions: number;
+}
+
+/** One row of a cost rollup — keyed by day, model, skill or runtime. */
+export interface CostRow {
+  key: string;
+  cost: number;
+  tokens: number;
+  /** Agent phases that contributed. */
+  calls: number;
+}
+
+/** One run in the usage view. */
+export interface UsageRun {
+  adw_id: string;
+  adw_name: string | null;
+  request: string | null;
+  status: string | null;
+  started_at: string | null;
+  cost: number;
+  tokens: number;
+  /** Distinct coding agents the run used, e.g. ["claude_code", "pi"]. */
+  runtimes: string[];
+}
+
+/** Tool calls of one tool, grouped by an owner (an agent, or a skill). */
+export interface ToolCount {
+  /** Agent name — "builder", or "builder › Explore" for a subagent. */
+  agent?: string;
+  runtime?: string | null;
+  skill?: string;
+  tool: string;
+  calls: number;
+  errors: number;
+}
+
+/**
+ * GET /api/usage?days=N — rollups over every session that started in the
+ * window. Pi runs carry no skill or subagent data: they land under "(none)"
+ * and their model comes from the agent's config.
+ */
+export interface UsageReport {
+  days: number;
+  totals: { cost: number; tokens: number; runs: number; tool_calls: number };
+  by_day: CostRow[];
+  by_model: CostRow[];
+  by_skill: CostRow[];
+  by_runtime: CostRow[];
+  runs: UsageRun[];
+  tools_by_agent: ToolCount[];
+  tools_by_skill: ToolCount[];
 }
 
 export interface ApiError {

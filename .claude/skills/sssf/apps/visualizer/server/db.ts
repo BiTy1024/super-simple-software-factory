@@ -26,7 +26,9 @@ import type {
   SessionDetail,
   SessionSummary,
   SessionUsage,
+  UsageReport,
 } from "../shared/types.ts";
+import { usageReport } from "./usage.ts";
 
 const DEFAULT_DB_RELATIVE = "adws/adw_data/sssf.db";
 const MAX_LIMIT = 1000;
@@ -293,7 +295,7 @@ export class SssfDb {
       append(row.adw_id, {
         adw_id: row.adw_id,
         agent: row.agent,
-        coding_agent: null,
+        coding_agent: payload.coding_agent ?? null,
         model: payload.model ?? null,
         session_id: payload.session_id ?? null,
         color: payload.color ?? null,
@@ -402,6 +404,11 @@ export class SssfDb {
            FROM gate_results WHERE adw_id = ? ORDER BY id`,
       )
       .all(adwId);
+  }
+
+  /** Cost and tool rollups over the sessions that started in the last `days`. */
+  usageReport(days = 30): UsageReport {
+    return usageReport(this.db, clamp(days, 1, 3650));
   }
 
   sessionCount(): number {

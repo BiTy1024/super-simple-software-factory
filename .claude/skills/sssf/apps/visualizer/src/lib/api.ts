@@ -7,6 +7,7 @@ import type {
   PromptsResponse,
   SessionDetail,
   SessionSummary,
+  UsageReport,
 } from './types'
 
 async function getJson(url: string): Promise<unknown> {
@@ -75,4 +76,8 @@ export function fetchEnvelopes(adwId: string): Promise<Envelope[]> {
 
 export function fetchGates(adwId: string): Promise<GateResult[]> {
   return getJson(`/api/sessions/${encodeURIComponent(adwId)}/gates`) as Promise<GateResult[]>
+}
+
+export function fetchUsage(days: number): Promise<UsageReport> {
+  return getJson(`/api/usage?days=${days}`) as Promise<UsageReport>
 }
