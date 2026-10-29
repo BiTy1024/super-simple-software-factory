@@ -642,6 +642,12 @@ function togglePanel(id: string) {
               <div class="p-meta">
                 <span class="p-tool">{{ richCall(e)?.tool }}</span>
                 <span v-if="richCall(e)?.ok === false" class="t-red">failed</span>
+                <span v-if="richCall(e)?.skill" class="p-tag" title="skill active for this call"
+                  >skill {{ richCall(e)?.skill }}</span
+                >
+                <span v-if="richCall(e)?.subagent" class="p-tag" title="ran inside a subagent"
+                  >subagent {{ richCall(e)?.subagent?.type }}</span
+                >
                 <StatChip
                   v-if="richCall(e)?.duration_ms != null"
                   kind="runtime"
@@ -1211,6 +1217,15 @@ h3:first-child {
   gap: 16px;
   align-items: baseline;
   margin-bottom: 10px;
+}
+
+.p-tag {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--faint);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
 }
 
 .p-tool {

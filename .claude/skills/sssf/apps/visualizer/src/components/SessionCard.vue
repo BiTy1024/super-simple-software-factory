@@ -8,6 +8,8 @@ import { hrefFor } from '../lib/router'
 import StatusChip from './StatusChip.vue'
 import StatChip from './StatChip.vue'
 import PhaseDots from './PhaseDots.vue'
+import RuntimeBadge from './RuntimeBadge.vue'
+import { runtimesOf } from '../lib/runtime'
 
 const props = defineProps<{ session: SessionSummary; nowMs: number }>()
 const emit = defineEmits<{ archived: [adwId: string] }>()
@@ -77,6 +79,8 @@ watch(
 )
 
 const running = computed(() => props.session.status === 'running')
+
+const runtimes = computed(() => runtimesOf(props.session.agents ?? []))
 
 const range = computed(() => {
   const s = props.session
@@ -154,7 +158,7 @@ const rows = computed<TimelineRow[]>(() => {
     return {
       owner,
       color: agentColor(info?.color, null, i),
-      title: info?.model ? `${owner} ${info.model}` : owner,
+      title: [owner, info?.model, info?.coding_agent].filter(Boolean).join(' · '),
       dots: byOwner.get(owner) ?? [],
     }
   })
@@ -198,7 +202,10 @@ const hiddenRowCount = computed(() =>
       ×
     </button>
     <span class="card-id">{{ session.adw_id }}</span>
-    <span class="card-adw" :title="session.adw_name ?? ''">{{ session.adw_name ?? '—' }}</span>
+    <span class="card-line">
+      <span class="card-adw" :title="session.adw_name ?? ''">{{ session.adw_name ?? '—' }}</span>
+      <RuntimeBadge v-for="r in runtimes" :key="r" :runtime="r" />
+    </span>
     <span class="card-req" :title="session.request ?? ''">{{ session.request }}</span>
 
     <div v-if="rows.length" class="tl">
@@ -332,8 +339,17 @@ const hiddenRowCount = computed(() =>
   color: var(--purple);
 }
 
-.card-adw {
+.card-line {
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.card-adw {
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--mono);
   font-size: 16px;
   color: var(--cyan);

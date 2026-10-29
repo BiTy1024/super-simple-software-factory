@@ -20,6 +20,7 @@ import { navigate, phaseCrumb } from '../lib/router'
 import StatusChip from './StatusChip.vue'
 import StatChip from './StatChip.vue'
 import PhaseDetail from './PhaseDetail.vue'
+import RuntimeBadge from './RuntimeBadge.vue'
 
 const props = defineProps<{ adwId: string; phaseId: string | null }>()
 
@@ -109,6 +110,8 @@ interface Lane {
   label: string
   /** Model driving this lane's agent — rendered with its provider icon. */
   model: string | null
+  /** Coding agent the lane ran on (pi | claude_code); null for engineer/code lanes. */
+  runtime: string | null
   /** Context-window occupancy, or null while unknown (running / old db). */
   context: LaneContext | null
   metaLines: string[]
@@ -174,6 +177,7 @@ const lanes = computed<Lane[]>(() => {
       id: 'engineer',
       label: session.value?.engineer ?? 'engineer',
       model: null,
+      runtime: null,
       context: null,
       metaLines: ['engineer'],
       color: ENGINEER_COLOR,
@@ -186,6 +190,7 @@ const lanes = computed<Lane[]>(() => {
       id: 'code',
       label: 'code',
       model: null,
+      runtime: null,
       context: null,
       metaLines: ['workspace'],
       color: CODE_COLOR,
@@ -202,6 +207,7 @@ const lanes = computed<Lane[]>(() => {
       // The model is the lane's whole story; thinking level lives in the
       // phase detail's agent config section.
       model: info?.model ?? start?.model ?? null,
+      runtime: info?.coding_agent ?? start?.coding_agent ?? null,
       context: laneContext(info),
       metaLines: [],
       color: agentColor(info?.color, start?.color, i),
@@ -467,6 +473,7 @@ function selectPhase(p: Phase) {
           <span v-if="lane.model" class="lane-meta lane-model" :title="lane.model">
             <img v-if="modelIcon(lane.model)" class="model-icon" :src="modelIcon(lane.model)!" alt="" />
             {{ modelName(lane.model) }}
+            <RuntimeBadge :runtime="lane.runtime" />
           </span>
           <span
             v-if="lane.context"
