@@ -109,6 +109,22 @@ class StreamAccumulatorTest(unittest.TestCase):
         self.assertEqual(len(merged["subagents"]), 2)
 
 
+class StreamOutputShortfallTest(unittest.TestCase):
+    """Usage numbers recorded from a real `claude -p` Haiku run: the stream's
+    lines report 24 output tokens, the result's modelUsage 694."""
+
+    def test_output_comes_from_model_usage_and_prices_to_the_bill(self):
+        stream, _ = replay(FIXTURES / "claude_stream_haiku.jsonl")
+        usage, rollups = stream.totals()
+        self.assertEqual((usage.input_tokens, usage.output_tokens,
+                          usage.cache_read_tokens, usage.cache_write_tokens),
+                         (8, 694, 4999, 3185))
+        self.assertEqual(usage.total_tokens, 8 + 694 + 4999 + 3185)
+        self.assertAlmostEqual(usage.priced_cost, 0.000795915)
+        self.assertAlmostEqual(usage.total_cost, 0.000795915)
+        self.assertEqual(rollups["by_skill"]["(none)"]["tokens"], usage.total_tokens)
+
+
 class CommandTest(unittest.TestCase):
     def request(self, **overrides) -> ClaudeRequest:
         base = dict(prompt="do it", system_prompt="# You are the builder", model="anthropic/sonnet",

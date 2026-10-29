@@ -146,6 +146,18 @@ usage, and counts each message once:
   shows up instead of hiding. Without a `result` event (the process was
   killed), the priced sum is used.
 - Per model: `result.modelUsage[model].costUSD` when present, else priced.
+- **Output tokens come from `result.modelUsage`.** A real Haiku run showed
+  that each stream line carries the usage as of the content block it
+  closes. The message's final output count (its `message_delta`) is never
+  on the stream. The lines summed to 24 output tokens, while `modelUsage`
+  reported 694. Input and cache buckets agreed exactly. The adapter takes
+  each model's shortfall from `modelUsage.outputTokens` and spreads it
+  evenly over that model's messages. With that, the table-priced cost of
+  the recorded run equals `total_cost_usd` to the last digit ($0.000795915).
+  The per-skill and per-subagent split of those output tokens is an
+  estimate. `--include-partial-messages` would give exact per-message
+  output, at the price of one event per streamed token; that is not
+  enabled.
 - Context: input + cache read + cache write of the last main-thread message.
   The window comes from `result.modelUsage[model].contextWindow`.
 

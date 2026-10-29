@@ -263,17 +263,43 @@ class StreamAccumulator:
         return record
 
     # ── totals ──────────────────────────────────────────────────────────────
+    def _output_shortfall(self) -> dict[str, int]:
+        """Output tokens the stream never reported, spread over the messages.
+
+        A stream line carries the usage as of the content block it closes, so
+        the last block's output — and the message's final output count — is
+        never on the stream. `result.modelUsage[model].outputTokens` has the
+        true total per model; input and cache buckets already agree with it.
+        The gap is split evenly over that model's messages: the total is exact,
+        the split across skills and subagents is an estimate.
+        """
+        extra: dict[str, int] = {}
+        for model, mu in ((self.result or {}).get("modelUsage") or {}).items():
+            ids = [i for i, m in self.messages.items() if m["model"] == model and m["usage"]]
+            if not ids or not isinstance(mu, dict):
+                continue
+            seen = sum(_n(self.messages[i]["usage"], "output_tokens") for i in ids)
+            missing = int(mu.get("outputTokens") or 0) - seen
+            if missing <= 0:
+                continue
+            share, rest = divmod(missing, len(ids))
+            for n, msg_id in enumerate(ids):
+                extra[msg_id] = share + (rest if n == len(ids) - 1 else 0)
+        return extra
+
     def totals(self) -> tuple[UsageBreakdown, dict]:
         """Usage over every message once, plus the agent_end rollups."""
         usage = UsageBreakdown()
         by_model: dict[str, dict] = {}
         by_skill: dict[str, dict] = {}
-        for msg in self.messages.values():
+        extra_output = self._output_shortfall()
+        for msg_id, msg in self.messages.items():
             u = msg["usage"]
             if not u:
                 continue
             model = msg["model"] or "unknown"
-            inp, out = _n(u, "input_tokens"), _n(u, "output_tokens")
+            inp = _n(u, "input_tokens")
+            out = _n(u, "output_tokens") + extra_output.get(msg_id, 0)
             read, write = _n(u, "cache_read_input_tokens"), _n(u, "cache_creation_input_tokens")
             write_1h = _n(u.get("cache_creation") or {}, "ephemeral_1h_input_tokens")
             tokens = inp + out + read + write
