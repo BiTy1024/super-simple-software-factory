@@ -10,15 +10,16 @@ disposes.
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
-from . import agent_pi, permissions, prompts
-from .data_types import (AgentCall, AgentConfig, EnvelopeBase, EventRecord,
-                         GateCheck, GateReport, Phase, PiRequest, SSSFConfig,
-                         UsageBreakdown)
+from . import agent_cc, agent_pi, permissions, prompts
+from .data_types import (AgentCall, AgentConfig, ClaudeRequest, EnvelopeBase,
+                         EventRecord, GateCheck, GateReport, Phase, PiRequest,
+                         SSSFConfig, UsageBreakdown)
 from .utils import new_id
 
 JSON_FIX_ATTEMPTS = 2      # continue-with-correction attempts for malformed JSON
@@ -34,10 +35,13 @@ def load_config(path: str = "adws/adw_sssf_config/sssf.config.yaml") -> SSSFConf
     raw = yaml.safe_load(Path(path).read_text()) or {}
     defaults = raw.get("defaults", {}) or {}
     for agent in raw.get("agents", []) or []:
-        for key in ("coding_agent", "model", "thinking", "color", "tools", "writes"):
+        for key in ("coding_agent", "model", "thinking", "color", "tools", "writes",
+                    "claude_code"):
             if key in defaults:
                 agent.setdefault(key, defaults[key])
         agent.setdefault("harness_engineering", defaults.get("harness_engineering", []))
+        if isinstance(defaults.get("claude_code"), dict):   # per key, not all-or-nothing
+            agent["claude_code"] = {**defaults["claude_code"], **(agent.get("claude_code") or {})}
     return SSSFConfig(**raw)
 
 
@@ -58,13 +62,19 @@ def validate(cfg: SSSFConfig, required: list[str]) -> None:
         except SystemExit as e:
             problems.append(str(e))
             continue
-        if agent.coding_agent != "pi":
-            problems.append(f"agent {name!r}: coding_agent {agent.coding_agent!r} "
-                            f"is not implemented in v1 (pi only)")
         for label, ref in (("system", agent.prompt_engineering.system),
                            ("user", agent.prompt_engineering.user)):
             if not Path(ref).is_file():
                 problems.append(f"agent {name!r}: {label} prompt not found: {ref}")
+        if agent.coding_agent == "claude_code":
+            # Claude Code resolves its own aliases (opus, sonnet, haiku); pi's
+            # catalog knows nothing about them, so it is not consulted.
+            if not agent_cc.available():
+                problems.append(f"agent {name!r}: claude_code needs the `claude` CLI — "
+                                f"not found as {agent_cc.CLAUDE_PATH!r} (set CLAUDE_PATH)")
+            if not agent.model.strip():
+                problems.append(f"agent {name!r}: model is empty")
+            continue
         try:
             agent_pi.resolve_model(agent.model)
         except ValueError as e:
@@ -92,6 +102,18 @@ def execute(run, phase: Phase, call: AgentCall) -> EnvelopeBase:
     prompts.save(agent_dir / "prompts", "user.md", user_text)
 
     session_id = _agent_session_id(run, agent)
+    claude = agent.coding_agent == "claude_code"
+    # Claude Code tells creating a conversation (--session-id) from continuing
+    # one (--resume); pi does both with one flag. A session id taken from the
+    # agent map already exists, so it is continued from the first send on.
+    resume = run.agent_map.get(agent.name, {}).get("session_id") == session_id
+    mapped_tools, dropped_tools = agent_cc.map_tools(agent.tools) if claude else (None, [])
+    # A directory in harness_engineering is a Claude Code plugin; a file is a pi
+    # extension, which Claude Code cannot load — reported, not passed.
+    plugin_dirs = [str(Path(d).resolve()) for d in agent.harness_engineering
+                   if claude and Path(d).is_dir()]
+    dropped_extensions = [d for d in agent.harness_engineering
+                          if claude and not Path(d).is_dir()]
     run.tracer.event(EventRecord(adw_id=run.adw_id, phase_id=phase.phase_id,
                                  type="agent_start", name=agent.name,
                                  payload={"model": agent.model, "thinking": agent.thinking,
@@ -100,7 +122,11 @@ def execute(run, phase: Phase, call: AgentCall) -> EnvelopeBase:
                                           "coding_agent": agent.coding_agent,
                                           "purpose": agent.purpose,
                                           "tools": agent.tools,  # None = all tools
-                                          "harness_engineering": agent.harness_engineering}))
+                                          "harness_engineering": agent.harness_engineering,
+                                          **({"claude_tools": mapped_tools,
+                                              "dropped_tools": dropped_tools,
+                                              "dropped_extensions": dropped_extensions}
+                                             if claude else {})}))
     run.console.agent_started(agent.name, agent.model, session_id)
 
     # Parse retries and gate corrections re-enter the SAME pi session, so the
@@ -108,29 +134,48 @@ def execute(run, phase: Phase, call: AgentCall) -> EnvelopeBase:
     # the opposite: every send costs, so usage accumulates across all of them.
     latest: agent_pi.PiResult | None = None
     spent = UsageBreakdown()
+    rollups: dict = {}
 
     def send(prompt_text: str) -> agent_pi.PiResult:
-        nonlocal latest
-        request = PiRequest(
-            prompt=prompt_text,
-            system_prompt=system_text,
-            model=agent.model,
-            thinking=agent.thinking,
-            session_id=session_id,
-            # absolute: these are read by the pi subprocess, which runs in repo_root
-            session_dir=str((agent_dir / "pi_sessions").resolve()),
-            raw_output_path=str((agent_dir / "raw_output.jsonl").resolve()),
-            tools=agent.tools,
-            extensions=agent.harness_engineering,
-            cwd=str(run.repo_root),
-        )
-        result = agent_pi.run(
-            request,
-            on_event=_event_forwarder(run, phase, agent.name),
+        nonlocal latest, resume
+        hooks = dict(
+            on_event=_event_forwarder(run, phase, agent.name,
+                                      agent_cc.ToolCallTracker() if claude
+                                      else agent_pi.ToolCallTracker()),
             on_spawn=lambda pid: run.tracer.process_start(
                 run.adw_id, "agent", agent.name, pid,
                 f"{agent.coding_agent} {agent.name} {agent.model}"),
             on_exit=lambda pid: run.tracer.process_end(run.adw_id, pid))
+        if claude:
+            result = agent_cc.run(ClaudeRequest(
+                prompt=prompt_text,
+                system_prompt=system_text,
+                model=agent.model,
+                thinking=agent.thinking,
+                session_id=session_id,
+                resume=resume,
+                raw_output_path=str((agent_dir / "raw_output.jsonl").resolve()),
+                tools=agent.tools,
+                plugin_dirs=plugin_dirs,
+                cwd=str(run.repo_root),
+                options=agent.claude_code,
+            ), **hooks)
+            resume = True                    # every later send continues this conversation
+            agent_cc.merge_rollups(rollups, result.rollups)
+        else:
+            result = agent_pi.run(PiRequest(
+                prompt=prompt_text,
+                system_prompt=system_text,
+                model=agent.model,
+                thinking=agent.thinking,
+                session_id=session_id,
+                # absolute: these are read by the pi subprocess, which runs in repo_root
+                session_dir=str((agent_dir / "pi_sessions").resolve()),
+                raw_output_path=str((agent_dir / "raw_output.jsonl").resolve()),
+                tools=agent.tools,
+                extensions=agent.harness_engineering,
+                cwd=str(run.repo_root),
+            ), **hooks)
         run.add_usage(result.tokens, result.cost)
         spent.merge(result.usage)
         latest = result
@@ -209,7 +254,8 @@ def execute(run, phase: Phase, call: AgentCall) -> EnvelopeBase:
                                  payload={"cost": spent.total_cost,
                                           "usage": spent.model_dump(),
                                           "context_tokens": context.context_tokens,
-                                          "context_window": context.context_window}))
+                                          "context_window": context.context_window,
+                                          **rollups}))
     run.console.agent_finished(agent.name, spent.total_tokens, spent.total_cost)
     if envelope.status != "success":
         raise RuntimeError(f"{agent.name} reported status={envelope.status!r}: {envelope.summary}")
@@ -227,27 +273,36 @@ def _as_report(result) -> GateReport:
 
 def _agent_session_id(run, agent: AgentConfig) -> str:
     entry = run.agent_map.get(agent.name)
-    if entry and entry.get("model") == agent.model:
+    if (entry and entry.get("model") == agent.model
+            and entry.get("coding_agent", "pi") == agent.coding_agent):
         return entry["session_id"]           # rejoin the existing context window
+    if agent.coding_agent == "claude_code":
+        return str(uuid.uuid4())             # Claude Code accepts only a UUID
     return f"sssf-{run.adw_id}-{agent.name}-{new_id(4)}"
 
 
-def _event_forwarder(run, phase: Phase, agent_name: str):
-    """One tool_call event per real tool call, with its exact args and result."""
-    tracker = agent_pi.ToolCallTracker()
+def _event_forwarder(run, phase: Phase, agent_name: str, tracker):
+    """One tool_call event per real tool call, with its exact args and result.
+
+    pi's tracker returns one record or None per event; Claude Code's returns a
+    list, because one user message can carry several tool results.
+    """
 
     def forward(event: dict) -> None:
-        record = tracker.observe(event)
-        if record is None:
-            return
-        # The call's span rides the columns; duration_ms stays in the payload as
-        # pi's own authoritative number.
-        run.tracer.event(EventRecord(adw_id=run.adw_id, phase_id=phase.phase_id,
-                                     type="tool_call", name=record.pop("label"),
-                                     started_at=record.pop("started_at", None),
-                                     ended_at=record.pop("ended_at", None),
-                                     payload={**record, "agent": agent_name}))
+        found = tracker.observe(event)
+        for record in (found if isinstance(found, list) else [found] if found else []):
+            _emit_tool_call(run, phase, agent_name, record)
     return forward
+
+
+def _emit_tool_call(run, phase: Phase, agent_name: str, record: dict) -> None:
+    # The call's span rides the columns; duration_ms stays in the payload as
+    # the coding agent's own number.
+    run.tracer.event(EventRecord(adw_id=run.adw_id, phase_id=phase.phase_id,
+                                 type="tool_call", name=record.pop("label"),
+                                 started_at=record.pop("started_at", None),
+                                 ended_at=record.pop("ended_at", None),
+                                 payload={**record, "agent": agent_name}))
 
 
 def _extract_json(text: str) -> dict:

@@ -301,6 +301,22 @@ class PromptEngineering(BaseModel):
     user: str                       # path to user.md
 
 
+class ClaudeCodeOptions(BaseModel):
+    """How a `coding_agent: claude_code` agent's `claude -p` is launched.
+
+    Only read for claude_code agents; pi ignores it. Headless means nobody
+    answers a permission prompt, so `permission_mode` plus the mapped `tools`
+    allowlist decide what runs — `writes` is still enforced in code afterwards.
+    """
+
+    permission_mode: str = "dontAsk"        # acceptEdits | auto | bypassPermissions | dontAsk | plan
+    system_prompt_mode: Literal["append", "replace"] = "append"
+    bare: bool = False                       # --bare: no user hooks/plugins/CLAUDE.md, API-key auth only
+    setting_sources: Optional[str] = None    # e.g. "project,local"
+    max_budget_usd: Optional[float] = None   # --max-budget-usd, per send
+    extra_args: list[str] = Field(default_factory=list)
+
+
 class AgentConfig(BaseModel):
     name: str
     coding_agent: Literal["pi", "claude_code"] = "pi"
@@ -320,6 +336,7 @@ class AgentConfig(BaseModel):
     #   [...] -> only these. A trailing "/" means a directory prefix; a "*"
     #            makes it a glob; anything else is an exact path.
     writes: Optional[list[str]] = None
+    claude_code: ClaudeCodeOptions = Field(default_factory=ClaudeCodeOptions)
 
 
 class ConfigDefaults(BaseModel):
@@ -336,6 +353,7 @@ class ConfigDefaults(BaseModel):
         "adws/adw_modules/", "adws/adw_sssf_config/", "adws/adw_*.py",
     ])
     data_dir: str = "adws/adw_data"
+    claude_code: ClaudeCodeOptions = Field(default_factory=ClaudeCodeOptions)
 
 
 class ObservabilityConfig(BaseModel):
@@ -385,6 +403,22 @@ class PiRequest(BaseModel):
     cwd: str = "."                  # set from run.repo_root — the codebase root agents work in
 
 
+class ClaudeRequest(BaseModel):
+    """Everything one non-interactive `claude -p` send needs."""
+
+    prompt: str
+    system_prompt: str
+    model: str                      # alias (sonnet) or id (claude-sonnet-5-5)
+    thinking: str = "medium"        # mapped onto --effort
+    session_id: str                 # a UUID — Claude Code requires one
+    resume: bool = False            # False: --session-id (create), True: --resume (continue)
+    raw_output_path: str            # stream-json lands here
+    tools: Optional[list[str]] = None
+    plugin_dirs: list[str] = Field(default_factory=list)
+    cwd: str = "."
+    options: ClaudeCodeOptions = Field(default_factory=ClaudeCodeOptions)
+
+
 class UsageBreakdown(BaseModel):
     """Tokens and the dollars they cost, per component, summed over a call.
 
@@ -407,6 +441,10 @@ class UsageBreakdown(BaseModel):
     cache_read_cost: float = 0.0
     cache_write_cost: float = 0.0
     total_cost: float = 0.0
+    # claude_code only: the four buckets priced from agent_cc's table. The
+    # total above is Claude Code's own `total_cost_usd`; keeping both shows
+    # drift between the table and the bill instead of hiding it.
+    priced_cost: float = 0.0
 
     def add_turn(self, usage: dict, total_tokens: int) -> None:
         """Fold in one pi `message_end` usage object.
@@ -445,3 +483,6 @@ class PiResult(BaseModel):
     # visualizer's context bar measures against `context_window`.
     context_tokens: int = 0
     context_window: int = 0         # 0 when the registry declares no ceiling
+    # Runtime-specific rollups for the agent_end payload — by_model, by_skill,
+    # subagents. Empty for pi; claude_code fills it (see agent_cc.py).
+    rollups: dict[str, Any] = Field(default_factory=dict)
